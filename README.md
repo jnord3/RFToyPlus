@@ -19,5 +19,7 @@ Use the OTA update URL of http://[IP Address]/update
 
 ## Recommendation:
 
-For 1527 Learning Code Wireless Remote Controllers, consider using the hexadecimal code "0158". To verify sufficient binary entropy in the ON/OFF code, convert the hexadecimal values to binary for visual inspection.
+- For 1527 Learning Code Wireless Remote - Controllers, consider using the hexadecimal timing code of "0158".
+
+- To verify sufficient binary entropy in the ON/OFF code, convert the hexadecimal values to binary for visual inspection.
 
