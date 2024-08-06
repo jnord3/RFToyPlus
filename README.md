@@ -1,4 +1,5 @@
-This folder contains RFToy hardware design files, firmware code, and documents.
+RFToy+ is a modified version of RFToy which now includes a web-based Backup & Restore feature and allows you to set the Code.
 
-RFToy 1.0/1.1 are based on ATmega328.
-RFToy 3.0/3.1 are based on ESP8266.
+The pre-compiled firmware can be found in the Build directory. 
+Use the OTA update URL of http://[IP Address]/update
+
