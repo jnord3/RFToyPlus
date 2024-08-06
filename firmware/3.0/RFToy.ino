@@ -95,6 +95,13 @@ struct StationStruct {
   boolean status;
 };
 
+struct RFStationData {
+	unsigned char on[6];
+	unsigned char off[6];
+	unsigned char delay[4];
+  unsigned char null;
+};
+
 StationStruct *stations;  // station data: memory mapped to EEPROM
 
 // ====== Button status ======
@@ -374,6 +381,39 @@ String getHex(unsigned long num,int chars){
   return s;
 }
 
+static ulong hex2ulong(unsigned char *code, unsigned char len) {
+	char c;
+	ulong v = 0;
+	for(unsigned char i=0;i<len;i++) {
+		c = code[i];
+		v <<= 4;
+		if(c>='0' && c<='9') {
+			v += (c-'0');
+		} else if (c>='A' && c<='F') {
+			v += 10 + (c-'A');
+		} else if (c>='a' && c<='f') {
+			v += 10 + (c-'a');
+		} else {
+			return 0;
+		}
+	}
+	return v;
+}
+
+/** Parse RF code into on/off/timing sections */
+uint16_t parse_rfstation_code(RFStationData *data, uint32_t* on, uint32_t *off) {
+	ulong v;
+	v = hex2ulong(data->on, sizeof(data->on));
+//	if (!v) return 0;
+	if (on) *on = v;
+	v = hex2ulong(data->off, sizeof(data->off));
+//	if (!v) return 0;
+	if (off) *off = v;
+	v = hex2ulong(data->delay, sizeof(data->delay));
+//	if (!v) return 0;
+	return v;
+}
+
 String getStationCode(int sid){
   String s = "";
   s += getHex(stations[sid].on,6);
@@ -439,7 +479,7 @@ boolean dummyInstructions() {
 
 // Prompt screen, appear at the beginning
 void promptScreen() {
-  display.drawString(getStrCenterOfs(5), 2, F("RFToy"));
+  display.drawString(getStrCenterOfs(5), 2, F("RFToy+"));
   display.drawString(0, 12, F("https://openthings.io"));
   display.drawString(10, 23, F("Enabled WiFi?"));
   display.drawString(10, 35, F("B1: Yes (default)"));
@@ -721,6 +761,7 @@ void changeController(){
     return;
   }
   boolean success = true;
+  boolean commit = false;
   if (server.hasArg("name")) {
     // change name
     String name = server.arg("name");
@@ -729,7 +770,17 @@ void changeController(){
     if(len>=STATION_NAME_SIZE) len=STATION_NAME_SIZE;
     strncpy(stations[sid].name, name.c_str(), len);
     stations[sid].name[STATION_NAME_SIZE-1]=0;
-    EEPROM.commit();
+    commit = true;
+  } 
+  if (server.hasArg("code")) {
+        RFStationData code;
+        String strCode = server.arg("code");
+        if (strCode.length() == 16) {
+          strcpy((char *) &code, strCode.c_str());  
+          stations[sid].delay = parse_rfstation_code(&code, &stations[sid].on, &stations[sid].off);
+          commit = true;
+        } else
+            success = false;
   } else if (server.hasArg("record")) {
     if (server.arg("record") == "on") {	
       // record on signal
@@ -749,6 +800,8 @@ void changeController(){
       server_send_result(HTTP_SUCCESS);
     } else { success = false; }
   }
+  if (commit)
+    EEPROM.commit();
   server_send_result(success?HTTP_SUCCESS:HTTP_FAIL);
   setMode(mode);
 }

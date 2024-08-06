@@ -38,8 +38,6 @@
   #define PRINTLN(x) {}
 #endif
 
-#define RFCODE_VERSION_STRING "H"
-
 // ====== PIN DEFINES ======
 #define MAIN_I2CADDR 0x20           // PCF8574 IO Expander I2C address
 #define MAIN_INPUTMASK 0b00001010
@@ -58,6 +56,11 @@
 //#define TRANSMIT_PIN 16
 //#define RECEIVE_PIN  14
 #define LED_PIN 2
+
+// For simplicity, assume 24-bit code, protocol 1
+// The RCSwitch library supports more general code 
+#define CODE_LENGTH 24
+#define PROTOCOL 1
 
 // ====== UI States ======
 #define UI_MENU 0
@@ -94,10 +97,15 @@ struct StationStruct {
   uint32_t on;
   uint32_t off;
   uint16_t delay;
-  uint8_t  protocol;
-  uint8_t  bitlength;
   char name[STATION_NAME_SIZE];
   boolean status;
+};
+
+struct RFStationData {
+	unsigned char on[6];
+	unsigned char off[6];
+	unsigned char delay[4];
+  unsigned char null;
 };
 
 StationStruct *stations;  // station data: memory mapped to EEPROM
@@ -214,7 +222,7 @@ void eeprom_init(bool force=false) {
 
   char* eptr = (char*)EEPROM.getDataPtr();
   // check signature
-  if(!force && eptr[SIG_ADDR]=='E' && eptr[SIG_ADDR+1]=='S' && eptr[SIG_ADDR+2]=='1') {
+  if(!force && eptr[SIG_ADDR]=='E' && eptr[SIG_ADDR+1]=='S' && eptr[SIG_ADDR+2]=='P') {
     // signature set, read configurations
     PRINTLN(F("EEPROM initialized"));
   } else {
@@ -230,7 +238,7 @@ void eeprom_init(bool force=false) {
     }
     eptr[SIG_ADDR] = 'E';
     eptr[SIG_ADDR+1] = 'S';
-    eptr[SIG_ADDR+2] = '1';
+    eptr[SIG_ADDR+2] = 'P';
     EEPROM.commit();
   }  
 }
@@ -379,14 +387,44 @@ String getHex(unsigned long num,int chars){
   return s;
 }
 
+static ulong hex2ulong(unsigned char *code, unsigned char len) {
+	char c;
+	ulong v = 0;
+	for(unsigned char i=0;i<len;i++) {
+		c = code[i];
+		v <<= 4;
+		if(c>='0' && c<='9') {
+			v += (c-'0');
+		} else if (c>='A' && c<='F') {
+			v += 10 + (c-'A');
+		} else if (c>='a' && c<='f') {
+			v += 10 + (c-'a');
+		} else {
+			return 0;
+		}
+	}
+	return v;
+}
+
+/** Parse RF code into on/off/timing sections */
+uint16_t parse_rfstation_code(RFStationData *data, uint32_t* on, uint32_t *off) {
+	ulong v;
+	v = hex2ulong(data->on, sizeof(data->on));
+//	if (!v) return 0;
+	if (on) *on = v;
+	v = hex2ulong(data->off, sizeof(data->off));
+//	if (!v) return 0;
+	if (off) *off = v;
+	v = hex2ulong(data->delay, sizeof(data->delay));
+//	if (!v) return 0;
+	return v;
+}
+
 String getStationCode(int sid){
-  String s = RFCODE_VERSION_STRING;
-  StationStruct *stn = &stations[sid];
-  s += getHex(stn->on,sizeof(stn->on)*2);
-  s += getHex(stn->off,sizeof(stn->on)*2);
-  s += getHex(stn->delay,sizeof(stn->delay)*2);
-  s += getHex(stn->protocol,sizeof(stn->protocol)*2);
-  s += getHex(stn->bitlength,sizeof(stn->bitlength)*2);
+  String s = "";
+  s += getHex(stations[sid].on,6);
+  s += getHex(stations[sid].off,6);
+  s += getHex(stations[sid].delay,4);
   s.toUpperCase();
   return s;
 }
@@ -447,7 +485,7 @@ boolean dummyInstructions() {
 
 // Prompt screen, appear at the beginning
 void promptScreen() {
-  display.drawString(getStrCenterOfs(10), 2, F("RFToy v3.1"));
+  display.drawString(getStrCenterOfs(5), 2, F("RFToy+"));
   display.drawString(0, 12, F("https://openthings.io"));
   display.drawString(10, 23, F("Enabled WiFi?"));
   display.drawString(10, 35, F("B1: Yes (default)"));
@@ -507,14 +545,12 @@ void uiDrawStation(){
   display.drawString(getStrCenterOfs(title.length()), 2, title);
   display.setColor(WHITE);
   display.drawString(0,15, F("Click B1/B3: play"));
-  display.drawString(0,25, F("Hold  B1/B3: record"));
-  display.drawString(0,55, F("on    back/del    off"));
+  display.drawString(0,27, F("Hold  B1/B3: record"));
+  display.drawString(0,52, F("on    back/del    off"));
   if(stations[station_selected].on==0 && stations[station_selected].off==0){
-    display.drawString(0,35, "Code: -");
+    display.drawString(0,39, "Code:-");
   } else {
-    String code = getStationCode(station_selected);
-    display.drawString(0,35, "Code: "+code.substring(0, 14));
-    display.drawString(0,45, "      "+code.substring(14));
+    display.drawString(0,39,"Code:"+getStationCode(station_selected));
   }
   display.display();
 }
@@ -590,13 +626,9 @@ void radioRecord(int staNum, boolean on){
         if(on){
           stations[staNum].on = mySwitch.getReceivedValue();
           stations[staNum].delay = mySwitch.getReceivedDelay();
-          stations[staNum].protocol = mySwitch.getReceivedProtocol();
-          stations[staNum].bitlength = mySwitch.getReceivedBitlength();
         } else {
           stations[staNum].off = mySwitch.getReceivedValue();
           stations[staNum].delay = mySwitch.getReceivedDelay();
-          stations[staNum].protocol = mySwitch.getReceivedProtocol();
-          stations[staNum].bitlength = mySwitch.getReceivedBitlength();
         }
         // forces dirty bit to be set to 1
         stations = (StationStruct*)EEPROM.getDataPtr();
@@ -615,16 +647,15 @@ void radioTransmit(int staNum, boolean on){
     digitalWriteExt(TRANSMIT_POWER_PIN,HIGH);
     delay(POWER_PAUSE);
     mySwitch.enableTransmit(TRANSMIT_PIN);
-    StationStruct *stn = &stations[staNum];
-    mySwitch.setProtocol(stn->protocol);
-    mySwitch.setPulseLength(stn->delay*.98);
+    mySwitch.setProtocol(PROTOCOL);
+    mySwitch.setPulseLength(stations[staNum].delay*.98);
     if(on){
-      if(stn->on != 0){
-        mySwitch.send(stn->on,stn->bitlength);
+      if(stations[staNum].on != 0){
+        mySwitch.send(stations[staNum].on,CODE_LENGTH);
       }
     } else {
-      if(stn->off != 0){
-        mySwitch.send(stn->off,stn->bitlength);
+      if(stations[staNum].off != 0){
+        mySwitch.send(stations[staNum].off,CODE_LENGTH);
       }
     }
     mySwitch.disableTransmit();
@@ -736,6 +767,7 @@ void changeController(){
     return;
   }
   boolean success = true;
+  boolean commit = false;
   if (server.hasArg("name")) {
     // change name
     String name = server.arg("name");
@@ -744,7 +776,17 @@ void changeController(){
     if(len>=STATION_NAME_SIZE) len=STATION_NAME_SIZE;
     strncpy(stations[sid].name, name.c_str(), len);
     stations[sid].name[STATION_NAME_SIZE-1]=0;
-    EEPROM.commit();
+    commit = true;
+  } 
+  if (server.hasArg("code")) {
+        RFStationData code;
+        String strCode = server.arg("code");
+        if (strCode.length() == 16) {
+          strcpy((char *) &code, strCode.c_str());  
+          stations[sid].delay = parse_rfstation_code(&code, &stations[sid].on, &stations[sid].off);
+          commit = true;
+        } else
+            success = false;
   } else if (server.hasArg("record")) {
     if (server.arg("record") == "on") {	
       // record on signal
@@ -764,6 +806,8 @@ void changeController(){
       server_send_result(HTTP_SUCCESS);
     } else { success = false; }
   }
+  if (commit)
+    EEPROM.commit();
   server_send_result(success?HTTP_SUCCESS:HTTP_FAIL);
   setMode(mode);
 }
@@ -777,7 +821,9 @@ void getController(){
     msg += F("\",\"status\":");
     msg += stations[i].status ? 1 : 0;
     msg += F(",\"code\":\"");
-    msg += getStationCode(i);
+    msg += getHex(stations[i].on, 6);
+    msg += getHex(stations[i].off, 6);
+    msg += getHex(stations[i].delay,4);
     msg += "\"}";
     if (i < (STATION_COUNT-1))  msg += ",";
   }

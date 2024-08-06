@@ -1,12 +1,12 @@
 <html>
 <head>
-	<title>RFToy</title>
+	<title>RFToy+</title>
   <meta name='viewport' content='width=device-width,initial-scale=1'>	
 	<link href="https://fonts.googleapis.com/css?family=Geo|Open Sans" rel="stylesheet">
 </head>
 <body>
 	<div style="max-width: 100%; margin: auto;">
-		<h1 id="title">RFToy</h1>
+		<h1 id="title">RFToy+</h1>
 		<div id="menu">
 			<div id="statusContainer">
 				<div id="statusIndicator"></div>
@@ -19,6 +19,8 @@
 				<div id="menuDropDownContent" class="menuDropDownContentClass">
 					<div id="menuDropDownRS">Raw Sample</div>
 					<div id="menuDropDownUp">Firmware</div>
+					<div id="menuDropDownB">Backup</div>
+					<div id="menuDropDownR">Restore</div>
 					<!--<div>Setting</div>-->
 				</div>
 			</div>
@@ -42,6 +44,7 @@
 						w('</div>');
 						w('<button class="recordOnBtn underScoreBtn">Record On</button>');
 						w('<button class="changeNameBtn underScoreBtn">Set Name</button>');
+						w('<button class="changeCodeBtn underScoreBtn">Set Code</button>');
 						w('<button class="recordOffBtn underScoreBtn">Record Off</button>');
 						w('</div>');
 					w('</div>');
@@ -162,13 +165,13 @@
 			padding: 0%;
 		}
 		.recordOnBtn, .recordOffBtn{
-			width: 31%;
+			width: 25%;
 			margin: 0% 1%;
 			padding: 10px;
 			cursor: pointer;
 		}
-		.changeNameBtn{
-			width: 32%;
+	.changeNameBtn, .changeCodeBtn{
+			width: 15%;
 			margin: 0% 1%;
 			padding: 10px;
 			cursor: pointer;
@@ -181,7 +184,7 @@
 	function id(s) {return document.getElementById(s);}
 	function clas(s) {return document.getElementsByClassName(s);}
 	var MAX_TIMEOUT = 15000;
-	Connection = { Connected:"Connected", Disconnected:"Disconnected", Timeout:"Timeout", Connecting:"Connecting"}
+	Connection = { Connected:"Connected", Disconnected:"Disconnected", Timeout:"Timeout", Connecting:"Connecting",Busy:"Busy"}
 	var cur_connection = Connection.Connecting;
 	var errorUpdateRate = 30000; // updating the page content once every 30 sec
 	var connectedUpdateRate = 3000; // updating the page content once every sec
@@ -285,6 +288,68 @@
 	let firmware = id("menuDropDownUp");
 	firmware.onclick = function() {window.open('update', '_top');}
 
+// JRN - Backup option
+
+	let backup = id("menuDropDownB");
+	backup.onclick = function() {
+		id("menuDropDownContent").classList.toggle("menuDropDownShow");
+		changeStatus(Connection.Busy);
+		fetch(ip+'jc')
+			.then(response => response.text())
+			.then(data => {
+	//			console.log(data);
+				const blob = new Blob([data], {type: "data:text/json;charset=utf-8",});
+				const url = URL.createObjectURL(blob);
+				const a = document.createElement("a");
+				a.href = url;
+				a.download =  "rftoy-backup-" + new Date().toLocaleDateString().replace( /\//g, "-" ) + ".json";
+				a.click();
+				URL.revokeObjectURL(url);
+			})
+			.catch(error => {
+				console.error("Error fetching data:", error);
+			});
+	}
+
+// JRN -- Restore Option
+	let restore = id("menuDropDownR");
+	restore.onclick = function() {
+		id("menuDropDownContent").classList.toggle("menuDropDownShow");
+		changeStatus(Connection.Busy);
+		var input = document.createElement('input');
+		input.type = 'file';
+		input.onchange = e => {
+			changeStatus(Connection.Busy);
+			var file = e.target.files[0]; 
+			var reader = new FileReader();
+			reader.readAsText(file,'UTF-8');
+			reader.onload = readerEvent => {
+				var content = readerEvent.target.result;
+				console.log( content );
+				data = JSON.parse(content);
+				for ( i = 0; i < data.stations.length; i++ ) {
+					changeStatus(Connection.Busy);
+					let xhr = new XMLHttpRequest();
+					let url = ip+"cc?sid="+i+"&name="+encodeURIComponent(data.stations[i].name)+"&code="+encodeURIComponent(data.stations[i].code);
+					xhr.open("GET", url, true);
+					//xhr.timeout = MAX_TIMEOUT;
+					//xhr.ontimeout = timeoutProcedure;
+					xhr.onreadystatechange = function(){
+						if (xhr.readyState === 4) {
+							if (xhr.status === 200) {
+								btn.innerHTML = input;
+							}else{
+								fail();
+							}
+						}
+					};
+					xhr.send();
+				}
+			}
+		}
+		input.click();
+	}
+
 	let acc = clas("accordion");
 	for (let i = 0; i < acc.length; i++) {
 		acc[i].onclick = function(){
@@ -337,6 +402,33 @@
 			}
 		}
 
+	// Change code button
+		let cco = clas("changeCodeBtn");
+		cco[i].onclick = function(){
+			let btn = cco[i].parentNode.previousSibling.firstChild;
+			let input = prompt("Enter the hexadecimal code for "+btn.innerHTML+" [First 6 ON, next 6 OFF, last 4 timing (recommend 0158)]",
+				"00553300553c0158");
+			if (input != null) {
+				if (input.length != 16) {
+					alert("Code must be 16 characters long.");
+				}else {
+					let xhr = new XMLHttpRequest();
+					let url = ip+"cc?sid="+i+"&code="+encodeURIComponent(input);
+					xhr.open("GET", url, true);
+					//xhr.timeout = MAX_TIMEOUT;
+					//xhr.ontimeout = timeoutProcedure;
+					xhr.onreadystatechange = function(){
+						if (xhr.readyState === 4) {
+							if (xhr.status != 200) {
+								fail();
+							}
+						}
+					};
+					xhr.send();
+				}
+			}
+		}
+
 		// record on signal button
 		let roBtn = ccn[i].previousSibling;
 		roBtn.onclick = function(){
@@ -361,7 +453,7 @@
 		}
 
 		// record off signal button
-		let rfBtn = ccn[i].nextElementSibling;
+		let rfBtn = cco[i].nextElementSibling;
 		rfBtn.onclick = function(){
 			this.disabled = true;
 			this.innerHTML = "Recording..";
